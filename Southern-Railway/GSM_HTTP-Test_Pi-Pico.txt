@@ -1,0 +1,185 @@
+#define TINY_GSM_MODEM_SIM7600
+#define TINY_GSM_RX_BUFFER 1024
+
+#define RX_PIN 5   // GPIO5 - Pico RX ← GSM TX
+#define TX_PIN 4   // GPIO4 - Pico TX → GSM RX
+
+#include <SoftwareSerial.h>
+#include <TinyGsmClient.h>
+#include <ArduinoJson.h>
+
+SoftwareSerial SerialAT(RX_PIN, TX_PIN);
+#define SerialMon Serial
+
+#define GSM_PIN "" 
+
+// SIM APN Configuration
+const char apn[]  = "airtelgprs"; 
+const char gprsUser[] = "";
+const char gprsPass[] = "";
+
+// API URL
+String api_url = "https://bharatrails.vercel.app/proins";
+
+// JSON payload
+StaticJsonDocument<200> payloadObj;
+String payload;
+
+// GSM Modem
+TinyGsm modem(SerialAT);
+
+// ---------------- FUNCTION DECLARATIONS ----------------
+void initModem();
+bool connectToNetwork();
+bool connectToGPRS();
+void preparePayload();
+void sendHTTPDataToServer();
+void readHTTPResponse();
+bool setHTTPParameter(String cmd, String value);
+bool sendATCommand(String cmd, long timeout = 10000L);
+
+// -------------------------------------------------------
+
+void setup() {
+  SerialMon.begin(115200);
+  delay(3000);
+
+  Serial.println("\n=== Raspberry Pi Pico + SIM7600 HTTP POST Example ===");
+
+  initModem();
+  
+  if (!connectToNetwork()) return;
+  if (!connectToGPRS()) return;
+
+  preparePayload();
+  sendHTTPDataToServer();
+}
+
+void loop() {
+  // Run once only
+  delay(1000);
+}
+
+// -------------------------------------------------------
+//               FUNCTION DEFINITIONS
+// -------------------------------------------------------
+
+void initModem() {
+  Serial.println("Initializing Modem...");
+  SerialAT.begin(115200);
+  delay(3000);
+
+  if (!modem.init()) {
+    Serial.println("❌ Failed to initialize modem");
+    while (1);
+  }
+
+  if (GSM_PIN && modem.getSimStatus() != 3) {
+    modem.simUnlock(GSM_PIN);
+  }
+
+  Serial.println("✅ Modem initialized");
+}
+
+bool connectToNetwork() {
+  Serial.println("Connecting to Network...");
+  if (!modem.waitForNetwork()) {
+    Serial.println("❌ Network connection failed");
+    return false;
+  }
+  Serial.println("✅ Network connected");
+  return true;
+}
+
+bool connectToGPRS() {
+  Serial.println("Connecting to GPRS...");
+  if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
+    Serial.println("❌ GPRS connection failed");
+    return false;
+  }
+  Serial.println("✅ GPRS connected");
+  return true;
+}
+
+void preparePayload() {
+  payloadObj["coachid"] = "B7-00000";
+  payloadObj["pribat"] = 30;
+  payloadObj["backbat"] = 20;
+  payloadObj["pripow"] = false;
+  payloadObj["maintainance"] = true;
+  payloadObj["lat"] = "11.020162";
+  payloadObj["lng"] = "76.954641";
+  payloadObj["sig"] = 20;
+  
+  serializeJson(payloadObj, payload);
+}
+
+void sendHTTPDataToServer() {
+  Serial.println("📡 Making HTTP POST request...");
+
+  sendATCommand("+HTTPINIT");
+
+  if (!setHTTPParameter("URL", api_url)) return;
+  if (!setHTTPParameter("CONTENT", "application/json")) return;
+
+  modem.sendAT("+HTTPDATA=" + String(payload.length()) + ",10000");
+  if (modem.waitResponse(10000L, "DOWNLOAD") != 1) {
+    Serial.println("❌ Data preparation failed");
+    modem.sendAT("+HTTPTERM");
+    return;
+  }
+
+  delay(1000);
+  SerialAT.print(payload);
+  modem.waitResponse(10000L);
+  Serial.println("✅ Data sent");
+
+  modem.sendAT("+HTTPACTION=1");
+  if (modem.waitResponse(10000L) != 1) {
+    Serial.println("❌ POST action failed");
+  } else {
+    Serial.println("✅ POST request sent successfully");
+    delay(5000);
+    readHTTPResponse();
+  }
+
+  delay(2000);
+  modem.sendAT("+HTTPTERM");
+  modem.waitResponse(5000L);
+
+  Serial.println("🌐 HTTP POST example completed");
+}
+
+void readHTTPResponse() {
+  Serial.println("Reading HTTP response...");
+
+  modem.sendAT("+HTTPREAD");
+  String response = "";
+  if (modem.waitResponse(5000L, response) == 1) {
+    Serial.print("📩 Server Response: ");
+    Serial.println(response);
+  } else {
+    Serial.println("❌ Failed to read response");
+  }
+}
+
+bool setHTTPParameter(String cmd, String value) {
+  String atCmd = "+HTTPPARA=\"" + cmd + "\",\"" + value + "\"";
+  modem.sendAT(atCmd);
+  if (modem.waitResponse(10000L) != 1) {
+    Serial.println("❌ Failed to set " + cmd);
+    modem.sendAT("+HTTPTERM");
+    return false;
+  }
+  Serial.println("✅ Set " + cmd + " successfully");
+  return true;
+}
+
+bool sendATCommand(String cmd, long timeout) {
+  modem.sendAT(cmd);
+  if (modem.waitResponse(timeout) != 1) {
+    Serial.println("❌ AT command failed: " + cmd);
+    return false;
+  }
+  return true;
+}

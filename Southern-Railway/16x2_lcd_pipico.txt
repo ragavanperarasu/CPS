@@ -1,0 +1,52 @@
+#include <LiquidCrystal.h>
+
+// Initialize the library with pin numbers
+// RS, E, D4, D5, D6, D7
+LiquidCrystal lcd(16, 17, 9, 8, 7, 6);
+
+void setup() {
+  // Set up the LCD's number of columns and rows
+  lcd.begin(16, 2);
+  
+  // Print initial messages
+  lcd.print("Hello World!");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("RPi Pico LCD");
+  
+  delay(2000);
+}
+
+void loop() {
+  // Clear display and show different messages
+  lcd.clear();
+  lcd.print("RS=GP16 E=GP17");
+  lcd.setCursor(0, 1);
+  lcd.print("D4-D7: GP9-GP6");
+  delay(2000);
+  
+  lcd.clear();
+  lcd.print("Arduino IDE");
+  lcd.setCursor(0, 1);
+  lcd.print("C Programming");
+  delay(2000);
+  
+  lcd.clear();
+  lcd.print("Counter Demo:");
+  lcd.setCursor(0, 1);
+  static int counter = 0;
+  lcd.print("Count: ");
+  lcd.print(counter);
+  counter++;
+  delay(1000);
+  
+  // Scroll text example
+  if (counter % 10 == 0) {
+    lcd.clear();
+    lcd.print("Scrolling Text");
+    for (int position = 0; position < 13; position++) {
+      lcd.setCursor(position, 1);
+      lcd.print("Hello");
+      delay(300);
+    }
+  }
+}

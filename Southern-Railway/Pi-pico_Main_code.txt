@@ -16,11 +16,14 @@
 #include <TinyGsmClient.h>
 #include <TinyGPS++.h>
 #include <ArduinoJson.h>
+#include <LiquidCrystal.h>
 
 SoftwareSerial SerialAT(RX_PIN, TX_PIN);
 #define SerialMon Serial
 
 #define GSM_PIN "" 
+
+LiquidCrystal lcd(17, 16, 6, 7, 8, 9);
 
 //Global Variable
 int PBatValue = 0;
@@ -77,6 +80,14 @@ void readGPSData();
 void handleSignal();
 
 void setup() {
+  lcd.begin(16, 2);
+  lcd.print(" FDS MONITORING");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("     SYSTEM");
+  delay(2000);
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Initializing...");
+  
   SerialMon.begin(115200);
   
   delay(3000);
@@ -89,11 +100,27 @@ void setup() {
   pinMode(RELEYSWITCH, OUTPUT);
   
   Serial.println("************STARTING FDS MONITORING SYSTEM BY GCT***************");
-
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("  GSM Modem  ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Initializing...");
+  
   initModem();
+
+  lcd.setCursor(0, 0);
+  lcd.print("  GSM Network  ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Connecting...");
   
   if (!connectToNetwork()) return;
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(" GPRS Network ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Connecting...");
   if (!connectToGPRS()) return;
+  lcd.clear();
 
 }
 
@@ -149,6 +176,8 @@ void initModem() {
 
   if (!modem.init()) {
     Serial.println("[ PROBLEM ] Failed to initialize modem");
+      lcd.setCursor(0, 1);  // Move to second line
+      lcd.print("Init Failed...");
     while (1);
   }
 
@@ -157,14 +186,22 @@ void initModem() {
   }
 
   Serial.println("[ STATUS ] Modem initialized Success");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Successfully...");
+  delay(2000);
+  lcd.clear();
 }
 
 bool connectToNetwork() {
   if (!modem.waitForNetwork()) {
     Serial.println("[ PROBLEM ] GSM Network connection failed");
+    lcd.setCursor(0, 1);  // Move to second line
+    lcd.print("     Failed    ");
     return false;
   }
   Serial.println("[ STATUS ] GSM Network connected");
+  lcd.setCursor(0, 1);  // Move to second line
+    lcd.print(" Successfully  ");
   return true;
 }
 
@@ -172,9 +209,13 @@ bool connectToGPRS() {
   //Serial.println("Connecting to GPRS...");
   if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
     Serial.println("[ PROBLEM ] GPRS connection failed");
+    lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("     Failed    ");
     return false;
   }
   Serial.println("[ STATUS ] GPRS connected");
+  lcd.setCursor(0, 1);
+  lcd.print(" Successfully  ");
   return true;
 }
 
@@ -191,10 +232,49 @@ void preparePayload() {
   serializeJson(payloadObj, payload);
   Serial.print("📡[ STATUS ] ");
   Serial.println(payload);
+
+  lcd.setCursor(0, 0);
+  lcd.print("PB BB M SS HV OP");
+  
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print(PBatValue);
+
+  lcd.setCursor(3, 1);  // Move to second line
+  lcd.print(BBatValue);
+
+  lcd.setCursor(8, 1);  // Move to second line
+  lcd.print(signalQuality);
+
+  if(MaintenanceValue == true){
+    lcd.setCursor(6, 1);  // Move to second line
+  lcd.print("T");
+  }
+  else{
+    lcd.setCursor(6, 1);  // Move to second line
+  lcd.print("F");
+  }
+
+  if(MainVolt == true){
+    lcd.setCursor(11, 1);  // Move to second line
+  lcd.print("T");
+  }
+  else{
+    lcd.setCursor(11, 1);  // Move to second line
+  lcd.print("F");
+  }
+
+  
+  delay(2000);
 }
 
 void sendHTTPDataToServer() {
   Serial.println("[ STATUS ]📡 Making HTTP POST request...");
+  
+  lcd.setCursor(0, 0);
+  lcd.print(" Send Post Req  ");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("    Sending ....");
 
   sendATCommand("+HTTPINIT");
 
@@ -203,7 +283,6 @@ void sendHTTPDataToServer() {
 
   modem.sendAT("+HTTPDATA=" + String(payload.length()) + ",10000");
   if (modem.waitResponse(10000L, "DOWNLOAD") != 1) {
-    //Serial.println("❌ Data preparation failed");
     modem.sendAT("+HTTPTERM");
     return;
   }
@@ -211,23 +290,58 @@ void sendHTTPDataToServer() {
   delay(1000);
   SerialAT.print(payload);
   modem.waitResponse(10000L);
-  //Serial.println("✅ Data sent");
 
+  // ======================================================
+  // 🔥 SEND HTTP ACTION (POST) AND CAPTURE STATUS CODE
+  // ======================================================
   modem.sendAT("+HTTPACTION=1");
-  if (modem.waitResponse(10000L) != 1) {
-    //Serial.println("❌ POST action failed");
-  } else {
-    Serial.println("[ STATUS ] POST request sent successfully");
-    delay(5000);
-    readHTTPResponse();
+
+  String actionResponse = "";
+  unsigned long timeout = millis() + 15000;
+
+  // Wait for +HTTPACTION response
+  while (millis() < timeout) {
+    while (SerialAT.available()) {
+      char c = SerialAT.read();
+      actionResponse += c;
+    }
+
+    // Stop if we received "+HTTPACTION"
+    if (actionResponse.indexOf("+HTTPACTION") != -1) {
+      break;
+    }
   }
 
+  Serial.println("RAW ACTION RESP:");
+  Serial.println(actionResponse);
+
+  // ======================================================
+  // 🔥 PARSE STATUS CODE (200, 404, 500, etc.)
+  // ======================================================
+  int c1 = actionResponse.indexOf(",");
+  int c2 = actionResponse.indexOf(",", c1 + 1);
+
+  String statusCode = "0";
+  if (c1 > 0 && c2 > 0) {
+    statusCode = actionResponse.substring(c1 + 1, c2);
+  }
+
+  Serial.print("[ STATUS ] HTTP Response Code: ");
+  Serial.println(statusCode);
+
+  lcd.setCursor(0, 1);
+  lcd.print(" Resp Code: ");
+  lcd.print(statusCode);
+
   delay(2000);
+
+  // Read server response
+  readHTTPResponse();
+
   modem.sendAT("+HTTPTERM");
   modem.waitResponse(5000L);
-
-  //Serial.println("🌐 HTTP POST example completed");
 }
+
 
 void readHTTPResponse() {
  // Serial.println("Reading HTTP response...");
@@ -366,10 +480,16 @@ void handleMainVolt(){
 }
 
 void handleRelay(){
-  if(PBatValue < 22)
+  if(PBatValue < 22){
     digitalWrite(RELEYSWITCH, HIGH);
+    lcd.setCursor(14, 1);  // Move to second line
+    lcd.print("BB");
+  
+  }
   else
     digitalWrite(RELEYSWITCH, LOW);
+    lcd.setCursor(14, 1);  // Move to second line
+    lcd.print("PB");
 }
 
 void handleSignal(){

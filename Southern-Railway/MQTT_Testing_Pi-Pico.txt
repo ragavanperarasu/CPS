@@ -1,0 +1,89 @@
+#define TINY_GSM_MODEM_SIM7600
+
+#define RX_PIN 5
+#define TX_PIN 4
+
+#include <SoftwareSerial.h>
+#include <TinyGsmClient.h>
+#include <PubSubClient.h>
+
+SoftwareSerial SerialAT(RX_PIN, TX_PIN);
+#define SerialMon Serial
+
+const char apn[] = "www";
+
+// MQTT Configuration
+const char* mqttBroker = "72.60.103.126";
+const int mqttPort = 1883;
+const char* mqttTopic = "train/data";
+
+TinyGsm modem(SerialAT);
+TinyGsmClient gsmClient(modem);
+PubSubClient mqttClient(gsmClient);
+
+void setup() {
+  SerialMon.begin(115200);
+  delay(3000);
+  
+  Serial.println("Starting...");
+  
+  // Initialize modem
+  SerialAT.begin(115200);
+  delay(3000);
+  
+  if (!modem.init()) {
+    Serial.println("Modem init failed");
+    while(1);
+  }
+  
+  // Connect to network
+  Serial.print("Waiting for network...");
+  if (!modem.waitForNetwork()) {
+    Serial.println("Network failed");
+    return;
+  }
+  Serial.println("OK");
+  
+  // Connect to GPRS
+  Serial.print("Connecting to GPRS...");
+  if (!modem.gprsConnect(apn, "", "")) {
+    Serial.println("GPRS failed");
+    return;
+  }
+  Serial.println("OK");
+  
+  // Setup MQTT
+  mqttClient.setServer(mqttBroker, mqttPort);
+  
+  // Connect to MQTT
+  Serial.print("Connecting to MQTT...");
+  String clientId = "pico-" + String(random(1000, 9999));
+  
+  if (mqttClient.connect(clientId.c_str())) {
+    Serial.println("Connected");
+    
+    // Send single test message
+    String message = "{\"test\":\"Hello from Aravind kesav Pico\",\"value\":123}";
+    
+    if (mqttClient.publish(mqttTopic, message.c_str())) {
+      Serial.println("Message sent: " + message);
+    } else {
+      Serial.println("Publish failed");
+    }
+    
+  } else {
+    Serial.println("MQTT connect failed");
+  }
+  
+  // Disconnect
+  delay(2000);
+  mqttClient.disconnect();
+  modem.gprsDisconnect();
+  
+  Serial.println("Test complete");
+}
+
+void loop() {
+  // Do nothing - one-time test only
+  delay(1000);
+}

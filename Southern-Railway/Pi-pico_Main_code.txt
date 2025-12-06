@@ -4,8 +4,8 @@
 #define RX_PIN 5   // GPIO5 - Pico RX ← GSM TX
 #define TX_PIN 4   // GPIO4 - Pico TX → GSM RX
 
-#define PBAT 26 // Primary Battery pin
-#define BBAT 27 // Backup Battery pin
+#define PBAT 27 // Primary Battery pin
+#define BBAT 26 // Backup Battery pin
 
 #define MAINTENANCE 22 // Maintanance switch pin
 
@@ -16,6 +16,7 @@
 #include <TinyGsmClient.h>
 #include <TinyGPS++.h>
 #include <ArduinoJson.h>
+#include <PubSubClient.h>
 #include <LiquidCrystal.h>
 
 SoftwareSerial SerialAT(RX_PIN, TX_PIN);
@@ -28,6 +29,9 @@ LiquidCrystal lcd(17, 16, 6, 7, 8, 9);
 //Global Variable
 int PBatValue = 0;
 int BBatValue = 0;
+// Add these with your other global variables
+unsigned long displaySwitchTime = 0;
+const unsigned long DISPLAY_SWITCH_INTERVAL = 10000; // 2 seconds
 
 bool MaintenanceValue = false;
 bool MainVolt = false;
@@ -53,15 +57,20 @@ const char apn[]  = "airtelgprs";
 const char gprsUser[] = "";
 const char gprsPass[] = "";
 
-// API URL
-String api_url = "https://bharatrails.vercel.app/proins";
+
 
 // JSON payload
+const char* mqttBroker = "72.60.103.126";
+const int mqttPort = 1883;
+const char* mqttTopic = "train/data";
+
 StaticJsonDocument<200> payloadObj;
 String payload;
 
 // GSM Modem
 TinyGsm modem(SerialAT);
+TinyGsmClient gsmClient(modem);
+PubSubClient mqttClient(gsmClient);
 
 void initModem();
 bool connectToNetwork();
@@ -78,50 +87,10 @@ void handleRelay();
 void displayInfo();
 void readGPSData();
 void handleSignal();
+void startUp();
 
 void setup() {
-  lcd.begin(16, 2);
-  lcd.print(" FDS MONITORING");
-  lcd.setCursor(0, 1);  // Move to second line
-  lcd.print("     SYSTEM");
-  delay(2000);
-  lcd.setCursor(0, 1);  // Move to second line
-  lcd.print("Initializing...");
-  
-  SerialMon.begin(115200);
-  
-  delay(3000);
-
-  gpsSerial.begin(9600);
-
-  delay(1000);
-
-  pinMode(MAINTENANCE, INPUT_PULLUP);
-  pinMode(RELEYSWITCH, OUTPUT);
-  
-  Serial.println("************STARTING FDS MONITORING SYSTEM BY GCT***************");
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("  GSM Modem  ");
-  lcd.setCursor(0, 1);  // Move to second line
-  lcd.print("Initializing...");
-  
-  initModem();
-
-  lcd.setCursor(0, 0);
-  lcd.print("  GSM Network  ");
-  lcd.setCursor(0, 1);  // Move to second line
-  lcd.print("Connecting...");
-  
-  if (!connectToNetwork()) return;
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(" GPRS Network ");
-  lcd.setCursor(0, 1);  // Move to second line
-  lcd.print("Connecting...");
-  if (!connectToGPRS()) return;
-  lcd.clear();
-
+  startUp();
 }
 
 void loop() {
@@ -143,9 +112,66 @@ void loop() {
   //sendHTTPDataToServer();
 
   if (millis() - lastSendTime >= 60000) { // 60000 ms = 1 minute
+  if(signalQuality > 35 || signalQuality < 15){
+      lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("  GSM Modem  ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Restart...");
+  modem.sendAT("AT+CFUN=1, 1");
+  delay(5000);
+  lcd.clear();
+  }else{
     sendHTTPDataToServer();
+  }
+    
     lastSendTime = millis(); // reset timer
   }
+}
+
+void startUp(){
+  lcd.begin(16, 2);
+  lcd.print(" FDS MONITORING");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("     SYSTEM");
+  delay(2000);
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Initializing...");
+  
+  SerialMon.begin(115200);
+  
+  delay(3000);
+
+  gpsSerial.begin(9600);
+
+  delay(1000);
+
+  pinMode(MAINTENANCE, INPUT_PULLUP);
+  pinMode(RELEYSWITCH, OUTPUT);
+  
+  
+  Serial.println("*STARTING FDS MONITORING SYSTEM BY GCT");
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("  GSM Modem  ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Initializing...");
+  
+  initModem();
+
+  lcd.setCursor(0, 0);
+  lcd.print("  GSM Network  ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Connecting...");
+  
+  if (!connectToNetwork()) return;
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(" GPRS Network ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Connecting...");
+  if (!connectToGPRS()) return;
+  lcd.clear();
 }
 
 void readGPSData() {
@@ -178,7 +204,6 @@ void initModem() {
     Serial.println("[ PROBLEM ] Failed to initialize modem");
       lcd.setCursor(0, 1);  // Move to second line
       lcd.print("Init Failed...");
-    while (1);
   }
 
   if (GSM_PIN && modem.getSimStatus() != 3) {
@@ -220,7 +245,7 @@ bool connectToGPRS() {
 }
 
 void preparePayload() {
-  payloadObj["coachid"] = "B7-00000";
+  payloadObj["coachid"] = "B7-203813";
   payloadObj["pribat"] = PBatValue;
   payloadObj["backbat"] = BBatValue;
   payloadObj["pripow"] = MainVolt;
@@ -232,6 +257,8 @@ void preparePayload() {
   serializeJson(payloadObj, payload);
   Serial.print("📡[ STATUS ] ");
   Serial.println(payload);
+
+
 
   lcd.setCursor(0, 0);
   lcd.print("PB BB M SS HV OP");
@@ -263,110 +290,70 @@ void preparePayload() {
   lcd.print("F");
   }
 
+  if (millis() - displaySwitchTime >= DISPLAY_SWITCH_INTERVAL) {
+     lcd.clear();  
+    displaySwitchTime = millis();
+    lcd.setCursor(0, 0);
+    lcd.print("LAT:");
+      lcd.print(latGPS, 4); // Show 4 decimal places
+      
+      // Show longitude on second line
+      lcd.setCursor(0, 1);
+      lcd.print("LNG:");
+      lcd.print(lonGPS, 4);
+
+      delay(4000);
+
+
+    lcd.clear(); // Clear screen when switching
+  }
+
+
+
+
   
-  delay(2000);
 }
 
 void sendHTTPDataToServer() {
   Serial.println("[ STATUS ]📡 Making HTTP POST request...");
-  
+    lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(" Send Post Req  ");
+  lcd.print(" Send MQTT Req ");
   
   lcd.setCursor(0, 1);
   lcd.print("    Sending ....");
 
-  sendATCommand("+HTTPINIT");
+  
+  
 
-  if (!setHTTPParameter("URL", api_url)) return;
-  if (!setHTTPParameter("CONTENT", "application/json")) return;
-
-  modem.sendAT("+HTTPDATA=" + String(payload.length()) + ",10000");
-  if (modem.waitResponse(10000L, "DOWNLOAD") != 1) {
-    modem.sendAT("+HTTPTERM");
-    return;
-  }
-
-  delay(1000);
-  SerialAT.print(payload);
-  modem.waitResponse(10000L);
-
-  // ======================================================
-  // 🔥 SEND HTTP ACTION (POST) AND CAPTURE STATUS CODE
-  // ======================================================
-  modem.sendAT("+HTTPACTION=1");
-
-  String actionResponse = "";
-  unsigned long timeout = millis() + 15000;
-
-  // Wait for +HTTPACTION response
-  while (millis() < timeout) {
-    while (SerialAT.available()) {
-      char c = SerialAT.read();
-      actionResponse += c;
+  mqttClient.setServer(mqttBroker, mqttPort);
+  
+  // Connect to MQTT
+  Serial.print("Connecting to MQTT...");
+  String clientId = "pico-" + String(random(1000, 9999));
+  
+  if (mqttClient.connect(clientId.c_str())) {
+    Serial.println("Connected");
+    
+    // Send single test message
+    //String message = "{\"test\":\"Hello from Srinath Pico\",\"value\":123}";
+ if (mqttClient.publish(mqttTopic, payload.c_str())) {
+      Serial.println("Message sent: " + payload);
+    } else {
+      Serial.println("Publish failed");
     }
-
-    // Stop if we received "+HTTPACTION"
-    if (actionResponse.indexOf("+HTTPACTION") != -1) {
-      break;
-    }
-  }
-
-  Serial.println("RAW ACTION RESP:");
-  Serial.println(actionResponse);
-
-  // ======================================================
-  // 🔥 PARSE STATUS CODE (200, 404, 500, etc.)
-  // ======================================================
-  int c1 = actionResponse.indexOf(",");
-  int c2 = actionResponse.indexOf(",", c1 + 1);
-
-  String statusCode = "0";
-  if (c1 > 0 && c2 > 0) {
-    statusCode = actionResponse.substring(c1 + 1, c2);
-  }
-
-  Serial.print("[ STATUS ] HTTP Response Code: ");
-  Serial.println(statusCode);
-
-  lcd.setCursor(0, 1);
-  lcd.print(" Resp Code: ");
-  lcd.print(statusCode);
-
-  delay(2000);
-
-  // Read server response
-  readHTTPResponse();
-
-  modem.sendAT("+HTTPTERM");
-  modem.waitResponse(5000L);
-}
-
-
-void readHTTPResponse() {
- // Serial.println("Reading HTTP response...");
-
-  modem.sendAT("+HTTPREAD");
-  String response = "";
-  if (modem.waitResponse(5000L, response) == 1) {
-   // Serial.print("📩 Server Response: ");
-    //Serial.println(response);
+    
   } else {
-    //Serial.println("❌ Failed to read response");
+    Serial.println("MQTT connect failed");
   }
+  
+  // Disconnect
+  delay(2000);
+ 
+   lcd.clear();
 }
 
-bool setHTTPParameter(String cmd, String value) {
-  String atCmd = "+HTTPPARA=\"" + cmd + "\",\"" + value + "\"";
-  modem.sendAT(atCmd);
-  if (modem.waitResponse(10000L) != 1) {
-   // Serial.println("❌ Failed to set " + cmd);
-    modem.sendAT("+HTTPTERM");
-    return false;
-  }
-  //Serial.println("✅ Set " + cmd + " successfully");
-  return true;
-}
+
 
 bool sendATCommand(String cmd, long timeout) {
   modem.sendAT(cmd);
@@ -474,22 +461,34 @@ void handleMaintenanceSwitch(){
 void handleMainVolt(){
   int MainVoltAna = analogRead(MAINVOLT);
   if(MainVoltAna < 500)
+  {
     MainVolt = true;
+  }
   else
+  {
     MainVolt = false;
+  }
 }
 
 void handleRelay(){
+
+    Serial.print("PBatValue: ");
+  Serial.print(PBatValue);
+  Serial.print(", Reley State: ");
+
   if(PBatValue < 22){
     digitalWrite(RELEYSWITCH, HIGH);
     lcd.setCursor(14, 1);  // Move to second line
     lcd.print("BB");
+       Serial.println("ON (BB)");
   
   }
-  else
+  else{
     digitalWrite(RELEYSWITCH, LOW);
     lcd.setCursor(14, 1);  // Move to second line
     lcd.print("PB");
+       Serial.println("ON (pb)");
+  }
 }
 
 void handleSignal(){

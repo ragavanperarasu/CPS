@@ -1,0 +1,519 @@
+#define TINY_GSM_MODEM_SIM7600
+#define TINY_GSM_RX_BUFFER 1024
+
+#define RX_PIN 5   // GPIO5 - Pico RX ← GSM TX
+#define TX_PIN 4   // GPIO4 - Pico TX → GSM RX
+
+#define PBAT 27 // Primary Battery pin
+#define BBAT 26 // Backup Battery pin
+
+#define MAINTENANCE 22 // Maintanance switch pin
+
+#define MAINVOLT 28 // 110 volt detection (500 > variable => present 110 volt)
+#define RELEYSWITCH 20 // Relay
+
+#include <SoftwareSerial.h>
+#include <TinyGsmClient.h>
+#include <TinyGPS++.h>
+#include <ArduinoJson.h>
+#include <PubSubClient.h>
+#include <LiquidCrystal.h>
+
+SoftwareSerial SerialAT(RX_PIN, TX_PIN);
+#define SerialMon Serial
+
+#define GSM_PIN "" 
+
+LiquidCrystal lcd(10, 11, 6, 7, 8, 9);
+
+//Global Variable
+int PBatValue = 0;
+int BBatValue = 0;
+// Add these with your other global variables
+unsigned long displaySwitchTime = 0;
+const unsigned long DISPLAY_SWITCH_INTERVAL = 10000; // 2 seconds
+
+bool MaintenanceValue = false;
+bool MainVolt = false;
+
+int RXPin = 17;  // for gps
+int TXPin = 16;
+
+int signalQuality;
+
+double latGPS = 0.0;
+double lonGPS = 0.0;      
+
+unsigned long lastSendTime = 0;
+unsigned long lastSendTime1 = 0;
+
+SoftwareSerial gpsSerial(RXPin,             TXPin);
+TinyGPSPlus gps;                                    
+
+
+
+// SIM APN Configuration
+const char apn[]  = "bsnlnet"; 
+const char gprsUser[] = "";
+const char gprsPass[] = "";
+
+
+
+// JSON payload
+const char* mqttBroker = "72.60.103.126";
+const int mqttPort = 1883;
+const char* mqttTopic = "train/data";
+
+StaticJsonDocument<200> payloadObj;
+String payload;
+
+// GSM Modem
+TinyGsm modem(SerialAT);
+TinyGsmClient gsmClient(modem);
+PubSubClient mqttClient(gsmClient);
+
+void initModem();
+bool connectToNetwork();
+bool connectToGPRS();
+void preparePayload();
+void sendHTTPDataToServer();
+void readHTTPResponse();
+bool setHTTPParameter(String cmd, String value);
+bool sendATCommand(String cmd, long timeout = 10000L);
+void voltageDetection();
+void handleMaintenanceSwitch();
+void handleMainVolt();
+void handleRelay();
+void displayInfo();
+void readGPSData();
+void handleSignal();
+void startUp();
+
+void setup() {
+  startUp();
+}
+
+void loop() {
+  unsigned long gpsStart = millis();
+  while (millis() - gpsStart < 500) {
+    while (gpsSerial.available() > 0) {
+      if (gps.encode(gpsSerial.read())) {
+        displayInfo();
+      }
+    }
+  }
+  
+  handleSignal();
+  voltageDetection();
+  handleMaintenanceSwitch();
+  handleMainVolt();
+  handleRelay();
+  preparePayload();
+  //sendHTTPDataToServer();
+
+  if (millis() - lastSendTime >= 60000) { // 60000 ms = 1 minute
+
+    if(signalQuality > 35 || signalQuality < 15){
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("  GSM Modem  ");
+      lcd.setCursor(0, 1);  // Move to second line
+      lcd.print("Restart...");
+      modem.sendAT("AT+CFUN=1, 1");
+      //modem.restart();
+      delay(5000);            
+      lcd.clear();
+    }else{
+      sendHTTPDataToServer();
+    }
+    
+    lastSendTime = millis(); // reset timer
+  }
+
+  if (millis() - lastSendTime1 >= 180000) {
+    lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("  GSM Modem  ");
+      lcd.setCursor(0, 1);  // Move to second line
+      lcd.print("Hard Restart...");
+      
+      modem.sendAT("AT+CFUN=1, 1");
+      //initModem();
+      //startUp();
+      delay(5000);
+      lcd.clear();
+
+      lastSendTime1 = millis(); // reset timer
+    }
+  
+
+  
+}
+
+
+
+void startUp(){
+  lcd.begin(16, 2);
+  lcd.print(" FDS MONITORING");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("     SYSTEM");
+  delay(2000);
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Initializing...");
+  
+  SerialMon.begin(115200);
+  
+  delay(3000);
+
+  gpsSerial.begin(9600);
+
+  delay(1000);
+
+  pinMode(MAINTENANCE, INPUT_PULLUP);
+  pinMode(RELEYSWITCH, OUTPUT);
+  
+  
+  Serial.println("*STARTING FDS MONITORING SYSTEM BY GCT");
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("  GSM Modem  ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Initializing...");
+  
+  initModem();
+
+  lcd.setCursor(0, 0);
+  lcd.print("  GSM Network  ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Connecting...");
+  
+  if (!connectToNetwork()) return;
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(" GPRS Network ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Connecting...");
+  if (!connectToGPRS()) return;
+  lcd.clear();
+}
+
+void readGPSData() {
+ while (gpsSerial.available() > 0) {
+    if (gps.encode(gpsSerial.read())) {
+      displayInfo();
+    }
+  }
+  if (millis() > 5000 && gps.charsProcessed() < 10) {
+    Serial.println("No GPS data received");
+  }
+}
+
+void displayInfo() {
+  if (gps.location.isValid()) {
+    latGPS = gps.location.lat();
+    lonGPS = gps.location.lng();
+  } else {
+    Serial.println("[ WARN ] Location Not available");
+  }
+}
+
+
+void initModem() {
+  //Serial.println("Initializing Modem...");
+  SerialAT.begin(115200);
+  delay(3000);
+
+  if (!modem.init()) {
+    Serial.println("[ PROBLEM ] Failed to initialize modem");
+      lcd.setCursor(0, 1);  // Move to second line
+      lcd.print("Init Failed...");
+  }
+
+  if (GSM_PIN && modem.getSimStatus() != 3) {
+    modem.simUnlock(GSM_PIN);
+  }
+
+  Serial.println("[ STATUS ] Modem initialized Success");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Successfully...");
+  delay(2000);
+  lcd.clear();
+}
+
+bool connectToNetwork() {
+  if (!modem.waitForNetwork()) {
+    Serial.println("[ PROBLEM ] GSM Network connection failed");
+    lcd.setCursor(0, 1);  // Move to second line
+    lcd.print("     Failed    ");
+    return false;
+  }
+  Serial.println("[ STATUS ] GSM Network connected");
+  lcd.setCursor(0, 1);  // Move to second line
+    lcd.print(" Successfully  ");
+  return true;
+}
+
+bool connectToGPRS() {
+  //Serial.println("Connecting to GPRS...");
+  if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
+    Serial.println("[ PROBLEM ] GPRS connection failed");
+    lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("     Failed    ");
+    return false;
+  }
+  Serial.println("[ STATUS ] GPRS connected");
+  lcd.setCursor(0, 1);
+  lcd.print(" Successfully  ");
+  return true;
+}
+
+void preparePayload() {
+  payloadObj["coachid"] = "C1-Testing";
+  payloadObj["pribat"] = PBatValue;
+  payloadObj["backbat"] = BBatValue;
+  payloadObj["pripow"] = MainVolt;
+  payloadObj["maintainance"] = MaintenanceValue;
+  payloadObj["lat"] = latGPS;
+  payloadObj["lng"] = lonGPS;
+  payloadObj["sig"] = signalQuality;
+  
+  serializeJson(payloadObj, payload);
+  Serial.print("📡[ STATUS ] ");
+  Serial.println(payload);
+
+
+
+  lcd.setCursor(0, 0);
+  lcd.print("PB BB M SS HV OP");
+  
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print(PBatValue);
+
+  lcd.setCursor(3, 1);  // Move to second line
+  lcd.print(BBatValue);
+
+  lcd.setCursor(8, 1);  // Move to second line
+  lcd.print(signalQuality);
+
+  if(MaintenanceValue == true){
+    lcd.setCursor(6, 1);  // Move to second line
+  lcd.print("T");
+  }
+  else{
+    lcd.setCursor(6, 1);  // Move to second line
+  lcd.print("F");
+  }
+
+  if(MainVolt == true){
+    lcd.setCursor(11, 1);  // Move to second line
+  lcd.print("T");
+  }
+  else{
+    lcd.setCursor(11, 1);  // Move to second line
+  lcd.print("F");
+  }
+
+  if (millis() - displaySwitchTime >= DISPLAY_SWITCH_INTERVAL) {
+     lcd.clear();  
+    displaySwitchTime = millis();
+    lcd.setCursor(0, 0);
+    lcd.print("LAT:");
+      lcd.print(latGPS, 4); // Show 4 decimal places
+      
+      // Show longitude on second line
+      lcd.setCursor(0, 1);
+      lcd.print("LNG:");
+      lcd.print(lonGPS, 4);
+
+      delay(4000);
+
+
+    lcd.clear(); // Clear screen when switching
+  }
+
+
+
+
+  
+}
+
+void sendHTTPDataToServer() {
+  Serial.println("[ STATUS ]📡 Making HTTP POST request...");
+    lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(" Send MQTT Req ");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("    Sending ....");
+
+  
+  
+
+  mqttClient.setServer(mqttBroker, mqttPort);
+  
+  // Connect to MQTT
+  Serial.print("Connecting to MQTT...");
+  String clientId = "pico-" + String(random(1000, 9999));
+  
+  if (mqttClient.connect(clientId.c_str())) {
+    Serial.println("Connected");
+    
+    // Send single test message
+    //String message = "{\"test\":\"Hello from Srinath Pico\",\"value\":123}";
+ if (mqttClient.publish(mqttTopic, payload.c_str())) {
+      Serial.println("Message sent: " + payload);
+    } else {
+      Serial.println("Publish failed");
+    }
+    
+  } else {
+    Serial.println("MQTT connect failed");
+  }
+  
+  // Disconnect
+  delay(2000);
+ 
+   lcd.clear();
+}
+
+
+
+bool sendATCommand(String cmd, long timeout) {
+  modem.sendAT(cmd);
+  if (modem.waitResponse(timeout) != 1) {
+    //Serial.println("❌ AT command failed: " + cmd);
+    return false;
+  }
+  return true;
+}
+
+void voltageDetection(){
+
+  int pbatan = analogRead(PBAT);
+  int bbatan = analogRead(BBAT);
+  
+  
+  if (pbatan >= 840) 
+     PBatValue = 30;
+  else if (pbatan >= 830 && pbatan < 840) 
+     PBatValue = 29;
+  else if (pbatan >= 820 && pbatan < 830)
+     PBatValue = 28;
+  else if (pbatan >= 800 && pbatan < 820) 
+    PBatValue = 27;
+  else if (pbatan >= 790 && pbatan <= 800) 
+     PBatValue = 26;
+  else if (pbatan >= 770 && pbatan <= 790) 
+     PBatValue = 25;
+  else if (pbatan >= 750 && pbatan <= 770)
+   PBatValue = 24;
+  else if (pbatan >= 730 && pbatan <= 750)
+   PBatValue = 23;
+  else if (pbatan >= 710 && pbatan <= 730)
+     PBatValue = 22;
+  else if (pbatan >= 690 && pbatan <= 710) 
+    PBatValue = 21;
+  else if (pbatan >= 660 && pbatan <= 690) 
+     PBatValue = 20;
+  else if (pbatan >= 640 && pbatan <= 660) 
+     PBatValue = 19;
+  else if (pbatan >= 610 && pbatan <= 640)
+   PBatValue = 18;
+  else if (pbatan >= 580 && pbatan <= 610)
+   PBatValue = 17;
+  else if (pbatan >= 550 && pbatan <= 580) 
+   PBatValue = 16;
+  else if (pbatan >= 510 && pbatan <= 550) 
+     PBatValue = 15;
+  else if (pbatan >= 480 && pbatan <= 510)
+   PBatValue = 14;
+  else if (pbatan >= 445 && pbatan <= 480)
+   PBatValue = 13;
+  else if (pbatan >= 410 && pbatan <= 445)
+   PBatValue = 12;
+  else
+    PBatValue = 0;
+
+  if (bbatan >= 840) 
+     BBatValue = 30;
+  else if (bbatan >= 830 && bbatan < 840) 
+     BBatValue = 29;
+  else if (bbatan >= 820 && bbatan < 830)
+     BBatValue = 28;
+  else if (bbatan >= 800 && bbatan < 820) 
+    BBatValue = 27;
+  else if (bbatan >= 790 && bbatan <= 800) 
+     BBatValue = 26;
+  else if (bbatan >= 770 && bbatan <= 790) 
+     BBatValue = 25;
+  else if (bbatan >= 750 && bbatan <= 770)
+   BBatValue = 24;
+  else if (bbatan >= 730 && bbatan <= 750)
+   BBatValue = 23;
+  else if (bbatan >= 710 && bbatan <= 730)
+     BBatValue = 22;
+  else if (bbatan >= 690 && bbatan <= 710) 
+    BBatValue = 21;
+  else if (bbatan >= 660 && bbatan <= 690) 
+     BBatValue = 20;
+  else if (bbatan >= 640 && bbatan <= 660) 
+     BBatValue = 19;
+  else if (bbatan >= 610 && bbatan <= 640)
+   BBatValue = 18;
+  else if (bbatan >= 580 && bbatan <= 610)
+   BBatValue = 17;
+  else if (bbatan >= 550 && bbatan <= 580) 
+   PBatValue = 16;
+  else if (bbatan >= 510 && bbatan <= 550) 
+     BBatValue = 15;
+  else if (bbatan >= 480 && bbatan <= 510)
+   BBatValue = 14;
+  else if (bbatan >= 445 && bbatan <= 480)
+   BBatValue = 13;
+  else if (bbatan >= 410 && bbatan <= 445)
+   BBatValue = 12;
+  else
+    BBatValue = 0;
+
+}
+
+void handleMaintenanceSwitch(){
+  MaintenanceValue = digitalRead(MAINTENANCE);
+}
+
+void handleMainVolt(){
+  int MainVoltAna = analogRead(MAINVOLT);
+  if(MainVoltAna < 500)
+  {
+    MainVolt = true;
+  }
+  else
+  {
+    MainVolt = false;
+  }
+}
+
+void handleRelay(){
+
+    Serial.print("PBatValue: ");
+  Serial.print(PBatValue);
+  Serial.print(", Reley State: ");
+
+  if(PBatValue < 22){
+    digitalWrite(RELEYSWITCH, HIGH);
+    lcd.setCursor(14, 1);  // Move to second line
+    lcd.print("BB");
+       Serial.println("ON (BB)");
+  
+  }
+  else{
+    digitalWrite(RELEYSWITCH, LOW);
+    lcd.setCursor(14, 1);  // Move to second line
+    lcd.print("PB");
+       Serial.println("ON (pb)");
+  }
+}
+
+void handleSignal(){
+  signalQuality = modem.getSignalQuality();  
+}

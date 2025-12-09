@@ -9,6 +9,8 @@
 
 #define MAINTENANCE 22 // Maintanance switch pin
 
+#define GSMPOWER 3 // Maintanance switch pin
+
 #define MAINVOLT 28 // 110 volt detection (500 > variable => present 110 volt)
 #define RELEYSWITCH 20 // Relay
 
@@ -90,7 +92,52 @@ void handleSignal();
 void startUp();
 
 void setup() {
-  startUp();
+
+  lcd.begin(16, 2);
+  lcd.print(" FDS MONITORING");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print(" SYSTEM BY GCT");
+  delay(2000);
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Initializing...");
+  
+  SerialMon.begin(115200);
+  
+  delay(3000);
+
+  gpsSerial.begin(9600);
+
+  delay(1000);
+
+  pinMode(MAINTENANCE, INPUT_PULLUP);
+  pinMode(RELEYSWITCH, OUTPUT);
+
+  pinMode(GSMPOWER, OUTPUT);
+  digitalWrite(GSMPOWER, LOW);
+  
+  Serial.println("***STARTING FDS MONITORING SYSTEM BY GCT***");
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("  GSM Modem  ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Initializing...");
+  
+  initModem();
+
+  lcd.setCursor(0, 0);
+  lcd.print("  GSM Network  ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Connecting...");
+  
+  if (!connectToNetwork()) return;
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(" GPRS Network ");
+  lcd.setCursor(0, 1);  // Move to second line
+  lcd.print("Connecting...");
+  if (!connectToGPRS()) return;
+  lcd.clear();
+
 }
 
 void loop() {
@@ -130,19 +177,19 @@ void loop() {
     lastSendTime = millis(); // reset timer
   }
 
-  if (millis() - lastSendTime1 >= 180000) {
+  if (millis() - lastSendTime1 >= 300000) {
     lcd.clear();
       lcd.setCursor(0, 0);
       lcd.print("  GSM Modem  ");
       lcd.setCursor(0, 1);  // Move to second line
       lcd.print("Hard Restart...");
-      
-      modem.sendAT("AT+CFUN=1, 1");
-      //initModem();
-      //startUp();
-      delay(5000);
-      lcd.clear();
 
+      digitalWrite(GSMPOWER, HIGH);
+      delay(3000);
+      digitalWrite(GSMPOWER, LOW);
+      delay(1000);
+      startUp();
+      lcd.clear();
       lastSendTime1 = millis(); // reset timer
     }
   
@@ -156,31 +203,27 @@ void startUp(){
   lcd.begin(16, 2);
   lcd.print(" FDS MONITORING");
   lcd.setCursor(0, 1);  // Move to second line
-  lcd.print("     SYSTEM");
+  lcd.print(" SYSTEM BY GCT");
   delay(2000);
   lcd.setCursor(0, 1);  // Move to second line
   lcd.print("Initializing...");
   
-  SerialMon.begin(115200);
   
-  delay(3000);
+  
+  
 
-  gpsSerial.begin(9600);
+ 
 
   delay(1000);
 
-  pinMode(MAINTENANCE, INPUT_PULLUP);
-  pinMode(RELEYSWITCH, OUTPUT);
-  
-  
-  Serial.println("*STARTING FDS MONITORING SYSTEM BY GCT");
+  Serial.println("***STARTING FDS MONITORING SYSTEM BY GCT***");
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("  GSM Modem  ");
   lcd.setCursor(0, 1);  // Move to second line
   lcd.print("Initializing...");
   
-  initModem();
+ // initModem();
 
   lcd.setCursor(0, 0);
   lcd.print("  GSM Network  ");

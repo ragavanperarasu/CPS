@@ -1,0 +1,74 @@
+#include <SPI.h>
+#include <LoRa.h>
+
+// Pin Definitions for Raspberry Pi Pico
+#define SS_PIN 17      // GP17 - Chip Select
+#define RST_PIN 20     // GP20 - Reset
+#define DIO0_PIN 21    // GP21 - DIO0 (Interrupt)
+
+// Receive settings
+#define CHECK_DELAY 100  // Check for messages every 100ms
+unsigned long lastCheckTime = 0;
+int receivedCount = 0;
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Initialize SPI
+  SPI.begin();
+  
+  // Set LoRa pins
+  LoRa.setPins(SS_PIN, RST_PIN, DIO0_PIN);
+  
+  // Initialize LoRa at 433 MHz
+  if (!LoRa.begin(433E6)) {
+    Serial.println("LoRa initialization failed!");
+    while (1);
+  }
+  
+  Serial.println("LoRa Receiver Initialized!");
+  Serial.println("Waiting for messages...");
+  Serial.println("==========================");
+}
+
+void loop() {
+  // Check for messages at regular intervals
+  if (millis() - lastCheckTime > CHECK_DELAY) {
+    checkForMessages();
+    lastCheckTime = millis();
+  }
+  
+  delay(10);  // Small delay
+}
+
+void checkForMessages() {
+  // Try to parse packet
+  int packetSize = LoRa.parsePacket();
+  
+  if (packetSize) {
+    receivedCount++;
+    
+    // Read packet
+    String receivedData = "";
+    while (LoRa.available()) {
+      receivedData += (char)LoRa.read();
+    }
+    
+    // Display received information
+    Serial.println("=================================");
+    Serial.print("Message #");
+    Serial.println(receivedCount);
+    Serial.print("Content: ");
+    Serial.println(receivedData);
+    Serial.print("RSSI: ");
+    Serial.print(LoRa.packetRssi());
+    Serial.println(" dBm");
+    Serial.print("SNR: ");
+    Serial.print(LoRa.packetSnr());
+    Serial.println(" dB");
+    Serial.print("Packet Size: ");
+    Serial.print(packetSize);
+    Serial.println(" bytes");
+    Serial.println("=================================");
+  }
+}

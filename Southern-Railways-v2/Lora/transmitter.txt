@@ -1,0 +1,62 @@
+#include <SPI.h>
+#include <LoRa.h>
+
+// Pin Definitions for Raspberry Pi Pico
+#define SS_PIN 17      // GP17 - Chip Select
+#define RST_PIN 20     // GP20 - Reset
+#define DIO0_PIN 21    // GP21 - DIO0 (Interrupt)
+
+// Transmission settings
+#define TRANSMIT_DELAY 2000  // Send every 2 seconds
+unsigned long lastSendTime = 0;
+int messageCounter = 0;
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Initialize SPI
+  SPI.begin();
+  
+  // Set LoRa pins
+  LoRa.setPins(SS_PIN, RST_PIN, DIO0_PIN);
+  
+  // Initialize LoRa at 433 MHz
+  if (!LoRa.begin(433E6)) {
+    Serial.println("LoRa initialization failed!");
+    while (1);
+  }
+  
+  Serial.println("LoRa Transmitter Initialized!");
+  Serial.println("Automatically sending messages...");
+}
+
+void loop() {
+  // Check if it's time to send a new message
+  if (millis() - lastSendTime > TRANSMIT_DELAY) {
+    messageCounter++;
+    
+    // Create message
+    String message = "Hello LoRa #" + String(messageCounter);
+    
+    // Send message
+    sendLoRaMessage(message);
+    
+    // Update last send time
+    lastSendTime = millis();
+  }
+  
+  delay(10);  // Small delay
+}
+
+void sendLoRaMessage(String message) {
+  Serial.print("Sending: ");
+  Serial.println(message);
+  
+  LoRa.beginPacket();
+  LoRa.print(message);
+  LoRa.endPacket();
+  
+  Serial.print("Message #");
+  Serial.print(messageCounter);
+  Serial.println(" sent successfully!");
+}

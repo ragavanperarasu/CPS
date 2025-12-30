@@ -1,0 +1,225 @@
+#include <SPI.h>
+#include <LoRa.h>
+// Receiver code
+// Pin Definitions for Raspberry Pi Pico
+#define SS_PIN 17      // GP17 - Chip Select
+#define RST_PIN 20     // GP20 - Reset
+#define DIO0_PIN 21    // GP21 - DIO0 (Interrupt)
+
+// Receiver settings
+#define CHECK_DELAY 50  // Check more frequently for multiple transmitters
+#define MAX_TRANSMITTERS 10  // Maximum expected transmitters
+#define TIMEOUT_MS 10000  // Consider transmitter inactive after 10 seconds
+
+unsigned long lastCheckTime = 0;
+
+// Structure to store transmitter information
+struct TransmitterInfo {
+    uint32_t transmitterID;  // Unique ID (from message or derived)
+    String lastMessage;
+    int rssi;
+    float snr;
+    unsigned long lastSeen;
+    int messageCount;
+    bool active;
+};
+
+TransmitterInfo transmitters[MAX_TRANSMITTERS];
+int activeTransmitters = 0;
+
+void setup() {
+    Serial.begin(115200);
+    
+    // Initialize SPI
+    SPI.begin();
+    
+    // Set LoRa pins
+    LoRa.setPins(SS_PIN, RST_PIN, DIO0_PIN);
+    
+    // Initialize LoRa at 433 MHz
+    if (!LoRa.begin(433E6)) {
+        Serial.println("LoRa initialization failed!");
+        while (1);
+    }
+    
+    // Optional: Set spreading factor, bandwidth, etc. for better multi-device performance
+    LoRa.setSpreadingFactor(7);      // Range: 6-12 (lower = faster)
+    LoRa.setSignalBandwidth(125E3);  // 125 kHz bandwidth
+    LoRa.setCodingRate4(5);          // Coding rate 4/5
+    
+    // Initialize transmitter array
+    for (int i = 0; i < MAX_TRANSMITTERS; i++) {
+        transmitters[i].active = false;
+        transmitters[i].messageCount = 0;
+    }
+    
+    Serial.println("LoRa Receiver Initialized for Multiple Transmitters!");
+    Serial.println("Listening for messages...");
+    Serial.println("==========================");
+}
+
+void loop() {
+    // Check for messages more frequently
+    if (millis() - lastCheckTime > CHECK_DELAY) {
+        checkForMessages();
+        lastCheckTime = millis();
+    }
+    
+    // Check for inactive transmitters periodically
+    static unsigned long lastCleanup = 0;
+    if (millis() - lastCleanup > 5000) {  // Every 5 seconds
+        cleanupInactiveTransmitters();
+        lastCleanup = millis();
+    }
+    
+    delay(10);
+}
+
+void checkForMessages() {
+    int packetSize = LoRa.parsePacket();
+    
+    if (packetSize) {
+        // Read packet
+        String receivedData = "";
+        while (LoRa.available()) {
+            receivedData += (char)LoRa.read();
+        }
+        
+        // Extract transmitter ID from message (if embedded)
+        uint32_t txID = extractTransmitterID(receivedData);
+        
+        // Find or add transmitter
+        int txIndex = findTransmitterIndex(txID);
+        
+        if (txIndex == -1) {
+            // New transmitter found
+            txIndex = addNewTransmitter(txID);
+            if (txIndex != -1) {
+                Serial.println("\n════════════════════════════════════════");
+                Serial.print("NEW TRANSMITTER DETECTED! ID: ");
+                Serial.println(txID);
+                Serial.println("════════════════════════════════════════\n");
+            }
+        }
+        
+        // Update transmitter information
+        if (txIndex != -1) {
+            updateTransmitterInfo(txIndex, receivedData);
+            displayReceivedMessage(txIndex, receivedData);
+        }
+    }
+}
+
+uint32_t extractTransmitterID(String message) {
+    // Method 1: Check if ID is embedded in message (e.g., "ID:123#Hello")
+    int idStart = message.indexOf("ID:");
+    int idEnd = message.indexOf("#");
+    
+    if (idStart != -1 && idEnd != -1 && idEnd > idStart + 3) {
+        String idStr = message.substring(idStart + 3, idEnd);
+        return (uint32_t)strtoul(idStr.c_str(), NULL, 10);
+    }
+    
+    // Method 2: Use RSSI and message hash as pseudo-ID (fallback)
+    // This helps distinguish transmitters even without explicit ID
+    uint32_t hash = 0;
+    for (unsigned int i = 0; i < message.length(); i++) {
+        hash = ((hash << 5) + hash) + message.charAt(i);  // Simple hash
+    }
+    hash ^= abs(LoRa.packetRssi());  // Combine with RSSI
+    
+    return hash;
+}
+
+int findTransmitterIndex(uint32_t txID) {
+    for (int i = 0; i < MAX_TRANSMITTERS; i++) {
+        if (transmitters[i].active && transmitters[i].transmitterID == txID) {
+            return i;
+        }
+    }
+    return -1;  // Not found
+}
+
+int addNewTransmitter(uint32_t txID) {
+    for (int i = 0; i < MAX_TRANSMITTERS; i++) {
+        if (!transmitters[i].active) {
+            transmitters[i].transmitterID = txID;
+            transmitters[i].active = true;
+            transmitters[i].messageCount = 0;
+            transmitters[i].lastSeen = millis();
+            activeTransmitters++;
+            return i;
+        }
+    }
+    return -1;  // No free slots
+}
+
+void updateTransmitterInfo(int index, String message) {
+    transmitters[index].lastMessage = message;
+    transmitters[index].rssi = LoRa.packetRssi();
+    transmitters[index].snr = LoRa.packetSnr();
+    transmitters[index].lastSeen = millis();
+    transmitters[index].messageCount++;
+}
+
+void displayReceivedMessage(int txIndex, String message) {
+    Serial.println("\n════════════════════════════════════════");
+    Serial.print("From TX #");
+    Serial.print(txIndex + 1);
+    Serial.print(" (ID: ");
+    Serial.print(transmitters[txIndex].transmitterID);
+    Serial.print(")");
+    
+    // Extract clean message if using ID format
+    int contentStart = message.indexOf("#");
+    String displayMsg = message;
+    if (contentStart != -1) {
+        displayMsg = message.substring(contentStart + 1);
+    }
+    
+    Serial.print(" | Message: ");
+    Serial.println(displayMsg);
+    
+    Serial.print("RSSI: ");
+    Serial.print(transmitters[txIndex].rssi);
+    Serial.print(" dBm | SNR: ");
+    Serial.print(transmitters[txIndex].snr);
+    Serial.println(" dB");
+    
+    Serial.print("Total Messages: ");
+    Serial.print(transmitters[txIndex].messageCount);
+    Serial.print(" | Active Transmitters: ");
+    Serial.println(activeTransmitters);
+    
+    // Display all active transmitters
+    Serial.println("\n--- Active Transmitters ---");
+    for (int i = 0; i < MAX_TRANSMITTERS; i++) {
+        if (transmitters[i].active) {
+            Serial.print("TX");
+            Serial.print(i + 1);
+            Serial.print(" (ID: ");
+            Serial.print(transmitters[i].transmitterID);
+            Serial.print(") - Last seen: ");
+            Serial.print((millis() - transmitters[i].lastSeen) / 1000);
+            Serial.println("s ago");
+        }
+    }
+    Serial.println("════════════════════════════════════════");
+}
+
+void cleanupInactiveTransmitters() {
+    for (int i = 0; i < MAX_TRANSMITTERS; i++) {
+        if (transmitters[i].active && 
+            (millis() - transmitters[i].lastSeen) > TIMEOUT_MS) {
+            
+            Serial.println("\n════════════════════════════════════════");
+            Serial.print("TRANSMITTER TIMEOUT - ID: ");
+            Serial.print(transmitters[i].transmitterID);
+            Serial.println(" removed from active list");
+            Serial.println("════════════════════════════════════════\n");
+            
+            transmitters[i].active = false;
+            activeTransmitters--;
+        }
+    }
+}

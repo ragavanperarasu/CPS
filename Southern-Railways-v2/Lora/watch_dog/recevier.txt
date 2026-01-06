@@ -1,0 +1,91 @@
+#include <SPI.h>
+#include <LoRa.h>
+// Transmitter
+#define SS_PIN 17
+#define RST_PIN 20
+#define DIO0_PIN 21
+
+#define MAX_NODES 20
+#define MAX_PAYLOAD 32
+#define RADIO_TIMEOUT 5000  // 5 seconds
+
+unsigned long lastPacketTime = 0;
+
+struct NodeData {
+  bool active;
+  int lastCounter;
+  int rssi;
+};
+
+NodeData nodes[MAX_NODES];
+
+void onReceive(int packetSize) {
+  if (packetSize <= 0 || packetSize > MAX_PAYLOAD) return;
+
+  char buffer[MAX_PAYLOAD];
+  int index = 0;
+
+  while (LoRa.available() && index < MAX_PAYLOAD - 1) {
+    buffer[index++] = (char)LoRa.read();
+  }
+  buffer[index] = '\0';
+
+  int rssi = LoRa.packetRssi();
+
+  char *comma = strchr(buffer, ',');
+  if (!comma) return;
+
+  int nodeId = atoi(buffer);
+  int counter = atoi(comma + 1);
+
+  if (nodeId >= 0 && nodeId < MAX_NODES) {
+    nodes[nodeId].active = true;
+    nodes[nodeId].lastCounter = counter;
+    nodes[nodeId].rssi = rssi;
+  }
+
+  Serial.print("From Node ");
+  Serial.print(nodeId);
+  Serial.print(" | Counter: ");
+  Serial.print(counter);
+  Serial.print(" | RSSI: ");
+  Serial.print(rssi);
+  Serial.println(" dBm");
+
+  lastPacketTime = millis();
+}
+
+void resetRadio() {
+  Serial.println("⚠ Radio reset");
+  LoRa.idle();
+  delay(5);
+  LoRa.receive();
+}
+
+void setup() {
+  Serial.begin(115200);
+  SPI.begin();
+
+  LoRa.setPins(SS_PIN, RST_PIN, DIO0_PIN);
+
+  if (!LoRa.begin(433E6)) {
+    Serial.println("LoRa init failed");
+    while (1);
+  }
+
+  LoRa.onReceive(onReceive);
+  LoRa.receive();
+
+  lastPacketTime = millis();
+
+  Serial.println("Interrupt-based LoRa Receiver READY");
+  Serial.println("----------------------------------");
+}
+
+void loop() {
+  // RADIO WATCHDOG
+  if (millis() - lastPacketTime > RADIO_TIMEOUT) {
+    resetRadio();
+    lastPacketTime = millis();
+  }
+}

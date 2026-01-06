@@ -1,0 +1,44 @@
+#include <SPI.h>
+#include <LoRa.h>
+// transmitter
+#define SS_PIN 17
+#define RST_PIN 20
+#define DIO0_PIN 21
+
+#define NODE_ID 2
+#define TRANSMIT_DELAY 2000
+
+unsigned long lastSendTime = 0;
+int counter = 0;
+
+void setup() {
+  Serial.begin(115200);
+  SPI.begin();
+  LoRa.setPins(SS_PIN, RST_PIN, DIO0_PIN);
+
+  if (!LoRa.begin(433E6)) {
+    Serial.println("LoRa init failed");
+    while (1);
+  }
+
+  Serial.print("Node ");
+  Serial.print(NODE_ID);
+  Serial.println(" started");
+}
+
+void loop() {
+  if (millis() - lastSendTime > TRANSMIT_DELAY) {
+    counter++;
+
+    String payload = String(NODE_ID) + "," + String(counter);
+
+    LoRa.beginPacket();
+    LoRa.print(payload);
+    LoRa.endPacket();
+
+    Serial.print("Sent: ");
+    Serial.println(payload);
+
+    lastSendTime = millis();
+  }
+}

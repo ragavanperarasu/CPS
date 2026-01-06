@@ -1,0 +1,110 @@
+#include <SPI.h>
+#include <LoRa.h>
+// Transmitter code
+// Pin Definitions for Raspberry Pi Pico
+#define SS_PIN 17      // GP17 - Chip Select
+#define RST_PIN 20     // GP20 - Reset
+#define DIO0_PIN 21    // GP21 - DIO0 (Interrupt)
+
+// Transmission settings
+#define TRANSMIT_DELAY 5000  // Send every 2 seconds (can be different for each transmitter)
+
+// Each transmitter should have a UNIQUE ID
+// Change this for each transmitter unit
+#define TRANSMITTER_ID 1001  // Unique ID: 1001, 1002, 1003, etc.
+
+// Optional: Add random delay to avoid collisions
+#define RANDOM_DELAY_MAX 500  // Maximum random delay in ms
+
+unsigned long lastSendTime = 0;
+int messageCounter = 0;
+
+void setup() {
+    Serial.begin(115200);
+    
+    // Initialize SPI
+    SPI.begin();
+    
+    // Set LoRa pins
+    LoRa.setPins(SS_PIN, RST_PIN, DIO0_PIN);
+    
+    // Initialize LoRa at 433 MHz
+    if (!LoRa.begin(433E6)) {
+        Serial.println("LoRa initialization failed!");
+        while (1);
+    }
+
+        // 1. ROBUST SETTINGS FOR MOTION
+    // Optional settings for better multi-transmitter performance
+    LoRa.setSpreadingFactor(12);      // Same as receiver
+    LoRa.setSignalBandwidth(125E3);  // Same as receiver
+    LoRa.setCodingRate4(8);          // Same as receiver
+    LoRa.setTxPower(20); 
+// 2. TRAIN-SPECIFIC OPTIMIZATIONS
+    LoRa.setPreambleLength(12);        // Longer preamble for sync in motion
+    LoRa.setSyncWord(0x34);           // Custom sync word (avoid interference)
+    LoRa.enableCrc();                 // Essential for error detection
+
+// 3. IMPROVE RELIABILITY
+    LoRa.setGain(0);                  // 0 = Automatic Gain Control (best for varying signals)
+    LoRa.setOCP(140);                 // Overcurrent protection for antenna issues
+    
+    // Optional: Add small random delay for first transmission
+    randomSeed(analogRead(0));  // Seed from floating analog pin
+    
+    Serial.print("LoRa Transmitter Initialized! ID: ");
+    Serial.println(TRANSMITTER_ID);
+    Serial.println("Automatically sending messages...");
+    
+    // Initial random delay to avoid all transmitters starting at once
+    delay(random(0, RANDOM_DELAY_MAX));
+}
+
+void loop() {
+    unsigned long currentTime = millis();
+    
+    // Check if it's time to send a new message
+    if (currentTime - lastSendTime > TRANSMIT_DELAY) {
+        messageCounter++;
+        
+        // Create message with ID prefix
+        String message = createMessage();
+        
+        // Send message
+        sendLoRaMessage(message);
+        
+        // Add small random delay to avoid collisions
+        int randomWait = random(0, RANDOM_DELAY_MAX);
+        delay(randomWait);
+        
+        // Update last send time
+        lastSendTime = currentTime + randomWait;
+    }
+    
+    delay(10);  // Small delay
+}
+
+String createMessage() {
+    // Format: "ID:[TransmitterID]#[Message Content]"
+    // Example: "ID:1001#Hello LoRa #15"
+    String message = "ID:" + String(TRANSMITTER_ID) + "#";
+    message += "Message #" + String(messageCounter);
+    
+    // Optional: Add sensor data or other information
+    // message += " Temp:" + String(readTemperature());
+    
+    return message;
+}
+
+void sendLoRaMessage(String message) {
+    Serial.print("Sending: ");
+    Serial.println(message);
+    
+    LoRa.beginPacket();
+    LoRa.print(message);
+    LoRa.endPacket();
+    
+    Serial.print("Message #");
+    Serial.print(messageCounter);
+    Serial.println(" sent successfully!");
+}

@@ -1,6 +1,6 @@
 #include <SPI.h>
 #include <LoRa.h>
-// Transmitter
+// Recevier
 #define SS_PIN 17
 #define RST_PIN 20
 #define DIO0_PIN 21

@@ -1,0 +1,16 @@
+void setup() {
+  Serial.begin(115200);          // USB Serial Monitor
+
+  Serial1.setTX(12);             // GP12 = TX
+  Serial1.setRX(13);             // GP13 = RX
+  Serial1.begin(9600);           // E32 default baud
+
+  Serial.println("E32 Transmitter Ready");
+}
+
+void loop() {
+  Serial1.println("Hello from Transmitter");
+  Serial.println("Sent: Hello from Transmitter");
+
+  delay(2000);
+}

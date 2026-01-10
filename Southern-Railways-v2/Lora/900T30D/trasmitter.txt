@@ -9,8 +9,8 @@ void setup() {
 }
 
 void loop() {
-  Serial1.println("Hello from Transmitter");
+  Serial1.println("{'coachid':'Testing','pribat':26,'backbat':28,'pripow':false,'maintainance':true,'lat':'11.0181','lng':'76.9725','sig':28}");
   Serial.println("Sent: Hello from Transmitter");
 
-  delay(2000);
+  delay(20000);
 }

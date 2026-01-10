@@ -1,0 +1,17 @@
+void setup() {
+  Serial.begin(115200);          // USB Serial Monitor
+
+  Serial1.setTX(12);             // GP12 = TX
+  Serial1.setRX(13);             // GP13 = RX
+  Serial1.begin(9600);           // E32 default baud
+
+  Serial.println("E32 Receiver Ready");
+}
+
+void loop() {
+  if (Serial1.available()) {
+    String msg = Serial1.readStringUntil('\n');
+    Serial.print("Received: ");
+    Serial.println(msg);
+  }
+}

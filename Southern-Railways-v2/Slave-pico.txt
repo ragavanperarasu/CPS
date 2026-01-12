@@ -1,0 +1,75 @@
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+#include <ArduinoJson.h>
+
+int RXPin = 17;  // for gps
+int TXPin = 16;
+
+double latGPS = 0.0;
+double lonGPS = 0.0; 
+
+unsigned long lastSendTime = 0;
+
+SoftwareSerial gpsSerial(RXPin,TXPin);
+TinyGPSPlus gps;   
+
+StaticJsonDocument<200> payloadObj;
+String payload;
+
+void setup() {
+  Serial.begin(115200);          // USB Serial Monitor
+  delay(2000);
+  gpsSerial.begin(9600);
+  delay(2000);
+  Serial1.setTX(12);             // GP12 = TX
+  Serial1.setRX(13);             // GP13 = RX
+  Serial1.begin(9600);           // E32 default baud
+
+  Serial.println("E32 Transmitter Ready");
+}
+
+void loop() {
+
+  unsigned long gpsStart = millis();
+  while (millis() - gpsStart < 500) {
+    while (gpsSerial.available() > 0) {
+      if (gps.encode(gpsSerial.read())) {
+        displayInfo();
+      }
+    }
+  }
+
+  if (millis() - lastSendTime >= 10000) { // 60000 ms = 1 minute
+    preparePayload();
+    lastSendTime = millis(); // reset timer
+  }
+
+
+  delay(100);
+}
+
+
+void displayInfo() {
+  if (gps.location.isValid()) {
+    latGPS = gps.location.lat();
+    lonGPS = gps.location.lng();
+  } else {
+    Serial.println("[ WARN ] Location Not available");
+  }
+}
+
+void preparePayload() {
+  payloadObj["coachid"] = "Testing";
+  payloadObj["pribat"] = 24;
+  payloadObj["backbat"] = 24;
+  payloadObj["pripow"] = true;
+  payloadObj["maintainance"] = true;
+  payloadObj["lat"] = latGPS;
+  payloadObj["lng"] = lonGPS;
+  
+  serializeJson(payloadObj, payload);
+  Serial1.println(payload);
+  Serial.print("📡[ STATUS ] ");
+  Serial.println(payload);
+
+}

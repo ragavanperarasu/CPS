@@ -8,28 +8,28 @@ int TXPin = 16;
 double latGPS = 0.0;
 double lonGPS = 0.0; 
 
-unsigned long lastSendTime = 0;
-
 SoftwareSerial gpsSerial(RXPin,TXPin);
-TinyGPSPlus gps;   
+TinyGPSPlus gps;
 
 StaticJsonDocument<200> payloadObj;
 String payload;
 
+unsigned long lastSendTime = 0;
+
 void setup() {
   Serial.begin(115200);          // USB Serial Monitor
-  delay(2000);
-  gpsSerial.begin(9600);
-  delay(2000);
+  delay(1000);
   Serial1.setTX(12);             // GP12 = TX
   Serial1.setRX(13);             // GP13 = RX
   Serial1.begin(9600);           // E32 default baud
+  delay(2000);
+  gpsSerial.begin(9600);
+  delay(1000);
 
   Serial.println("E32 Transmitter Ready");
 }
 
 void loop() {
-
   unsigned long gpsStart = millis();
   while (millis() - gpsStart < 500) {
     while (gpsSerial.available() > 0) {
@@ -39,15 +39,13 @@ void loop() {
     }
   }
 
-  if (millis() - lastSendTime >= 10000) { // 60000 ms = 1 minute
+  if (millis() - lastSendTime >= 20000) { // 60000 ms = 1 minute
     preparePayload();
     lastSendTime = millis(); // reset timer
   }
 
-
   delay(100);
 }
-
 
 void displayInfo() {
   if (gps.location.isValid()) {
@@ -59,17 +57,21 @@ void displayInfo() {
 }
 
 void preparePayload() {
-  payloadObj["coachid"] = "Testing";
-  payloadObj["pribat"] = 24;
-  payloadObj["backbat"] = 24;
-  payloadObj["pripow"] = true;
-  payloadObj["maintainance"] = true;
-  payloadObj["lat"] = latGPS;
-  payloadObj["lng"] = lonGPS;
-  
-  serializeJson(payloadObj, payload);
-  Serial1.println(payload);
-  Serial.print("📡[ STATUS ] ");
-  Serial.println(payload);
 
+ String payload =
+    "Test|" +
+    String(25) + "|" +          // pb
+    String(24) + "|" +          // bb
+    String(1)  + "|" +          // pp
+    String(1)  + "|" +          // m
+    String(latGPS) + "|" +   // latitude (4 decimals)
+    String(lonGPS);          // longitude
+
+  Serial.print("📡[ STATUS ] ");
+  Serial.println(latGPS);
+  
+  delay(1000);
+  //Serial1.println("{\"coachid\":\"Testing\",\"pribat\":25,\"backbat\":24,\"pripow\":true,\"maintainance\":true,\"lat\":11.02020333,\"lng\":76.9354195}");
+
+  Serial1.println(payload);
 }

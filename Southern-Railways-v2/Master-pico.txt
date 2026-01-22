@@ -38,7 +38,7 @@ TinyGPSPlus gps;
 
 
 // SIM APN Configuration
-const char apn[]  = "bsnlnet"; 
+const char apn[]  = "airtelgprs"; 
 const char gprsUser[] = "";
 const char gprsPass[] = "";
 
@@ -47,7 +47,7 @@ const char gprsPass[] = "";
 // JSON payload
 const char* mqttBroker = "72.60.103.126";
 const int mqttPort = 1883;
-const char* mqttTopic = "train/data";
+const char* mqttTopic = "loratrain/data";
 
 // GSM Modem
 TinyGsm modem(SerialAT);
@@ -87,30 +87,32 @@ void setup() {
 }
 
 void loop() {
-  //unsigned long gpsStart = millis();
- // while (millis() - gpsStart < 500) {
-  //  while (gpsSerial.available() > 0) {
-  //    if (gps.encode(gpsSerial.read())) {
-  //      displayInfo();
-   //   }
-  //  }
- // }
+  unsigned long gpsStart = millis();
+  while (millis() - gpsStart < 500) {
+    while (gpsSerial.available() > 0) {
+      if (gps.encode(gpsSerial.read())) {
+        displayInfo();
+      }
+    }
+  }
 
   if (Serial1.available()) {
-    String data = Serial1.readStringUntil('\n');
-    data.trim();
+    String dataa = Serial1.readStringUntil('\n');
+    dataa.trim();
 
     Serial.println("Received Raw Data:");
-    Serial.println(data);
-    StaticJsonDocument<256> doc;   // size adjusted for your JSON
-    DeserializationError error = deserializeJson(doc, data);
-    if (error) {
-      Serial.print("JSON Deserialize failed: ");
-      Serial.println(error.c_str());
-      return;
-    }
-
-    doc["sig"] = 17;
+    Serial.println(dataa);
+    StaticJsonDocument<384> doc;   // size adjusted for your JSON
+    DeserializationError error = deserializeJson(doc, dataa);
+    //if (error) {
+   //   Serial.print("JSON Deserialize failed: ");
+   //   Serial.println(error.c_str());
+   //   return;
+   // }
+    doc["data"] = dataa;
+    doc["sig"] = signalQuality;
+    doc["mlat"] = latGPS;
+    doc["mlon"] = lonGPS;
     String output;
     serializeJson(doc, output);
 
@@ -124,15 +126,15 @@ void loop() {
   handleSignal();
   //sendHTTPDataToServer();
 
-  if (millis() - lastSendTime >= 10000) { // 60000 ms = 1 minute
-  Serial.println("reset moden..........");
-    if(signalQuality > 35 || signalQuality < 15){
-      modem.sendAT("AT+CFUN=1, 1");
-      delay(5000);            
-    }
+  //if (millis() - lastSendTime >= 180000) { // 60000 ms = 1 minute
+  //Serial.println("reset moden..........");
+  //  if(signalQuality > 35 || signalQuality < 15){
+  //    modem.sendAT("AT+CFUN=1, 1");
+  //    delay(5000);            
+  //  }
     
-    lastSendTime = millis(); // reset timer
-  }
+  //  lastSendTime = millis(); // reset timer
+  //}
 
   if (millis() - lastSendTime1 >= 300000) {
     Serial.println("realy.................");
@@ -152,7 +154,7 @@ void loop() {
 
 void startUp(){
   Serial.println("***STARTING FDS MONITORING SYSTEM BY GCT***");
- // initModem();
+  //initModem();
   if (!connectToNetwork()) return;
   if (!connectToGPRS()) return;
 }

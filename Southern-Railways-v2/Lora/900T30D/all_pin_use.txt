@@ -1,0 +1,96 @@
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+
+int RXPin = 17;  // GPS RX
+int TXPin = 16;  // GPS TX
+
+#define M0_PIN 2
+#define M1_PIN 3
+#define AUX_PIN 4
+
+double latGPS = 0.0;
+double lonGPS = 0.0;
+
+SoftwareSerial gpsSerial(RXPin, TXPin);
+TinyGPSPlus gps;
+
+unsigned long lastSendTime = 0;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  // E32 UART
+  Serial1.setTX(12);
+  Serial1.setRX(13);
+  Serial1.begin(9600);
+
+  gpsSerial.begin(9600);
+
+  pinMode(M0_PIN, OUTPUT);
+  pinMode(M1_PIN, OUTPUT);
+  pinMode(AUX_PIN, INPUT);
+
+  // Normal mode (M0=0, M1=0)
+  digitalWrite(M0_PIN, LOW);
+  digitalWrite(M1_PIN, LOW);
+
+  Serial.println("✅ E32 Transmitter Ready");
+}
+
+void loop() {
+  unsigned long gpsStart = millis();
+  while (millis() - gpsStart < 500) {
+    while (gpsSerial.available()) {
+      gps.encode(gpsSerial.read());
+    }
+  }
+
+  if (gps.location.isValid()) {
+    latGPS = gps.location.lat();
+    lonGPS = gps.location.lng();
+  }
+
+  if (millis() - lastSendTime >= 20000) {
+    sendPayload();
+    lastSendTime = millis();
+  }
+}
+
+void sendPayload() {
+
+  String payload =
+    "Test|" +
+    String(25) + "|" +
+    String(24) + "|" +
+    String(1)  + "|" +
+    String(1)  + "|" +
+    String(latGPS, 6) + "|" +
+    String(lonGPS, 6);
+
+  waitAUX();   // wait until module is ready
+
+  Serial1.println(payload);
+
+  Serial.print("📡 Sent: ");
+  Serial.println(payload);
+
+  waitAUX();   // wait until transmission finishes
+
+  printAUXStatus();
+}
+
+void waitAUX() {
+  while (digitalRead(AUX_PIN) == LOW) {
+    // waiting for E32 (busy)
+    Serial.println("Module busy");
+  }
+}
+
+void printAUXStatus() {
+  if (digitalRead(AUX_PIN) == HIGH) {
+    Serial.println("🟢 AUX HIGH → Transmission complete / Idle");
+  } else {
+    Serial.println("🔴 AUX LOW → Module busy");
+  }
+}
